@@ -1,8 +1,8 @@
-from operator import *
+from base_op_class import *
 from findiff import FinDiff
         
 class ScalarDerOp(FinDiffOp):
-    def __init__(self, N, xDer, yDer, dx = None, dy = None, BC = 'constant', bVal = 0):
+    def __init__(self, N, xDer, yDer, dx = None, dy = None, BC = 'constant', bVal = None):
         """ BC can be constant (Dirichlet) or backward. Want to implement extrapolation and Pade scheme as well """
 
         assert BC == 'constant' or BC == 'backward'
@@ -10,6 +10,7 @@ class ScalarDerOp(FinDiffOp):
         assert xDer <=2 and yDer <= 2
         assert not xDer > 0 and dx is None
         assert not yDer > 0 and dy is None
+        assert not BC == 'constant' and bVal is None
 
         if BC == 'backward':
             mat = self._FinDiffInit(N, xDer, yDer, dx, dy)
