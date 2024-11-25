@@ -6,21 +6,22 @@ from matplotlib.pyplot import spy, show
 class FinDiffOp:
     def __init__(self, matrix):
         assert isinstance(matrix, spmatrix) or isinstance(matrix, np.ndarray)
-        self.matrix = spmatrix(matrix)
+        self.matrix = matrix
 
-    def apply(self, grid, bVal = None):
+    def apply(self, grid, bVals = None):
         soln = (self.matrix @ grid.flatten()).reshape(grid.shape)
-        if bVal is None:
+        if bVals is None:
             return soln
         else:
-            if isinstance(bVal, int, float, np.integer, np.floating):
-                soln[0] = soln[-1] = bVal
-                soln[:, 0] = soln[:, -1] = bVal
-                return soln
-            return NotImplemented
+            lrVals, tbVals = bVals
+            if lrVals is not None:
+                soln[:, 0], soln[:, -1] = lrVals
+            if tbVals is not None:
+                soln[0], soln[-1] = tbVals
+            return soln
     
     def getMatrix(self):
-        return np.copy(self.matrix)
+        return self.matrix
     
     def __add__(self, obj):
         if isinstance(obj, FinDiffOp):
