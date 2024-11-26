@@ -52,10 +52,11 @@ class FinDiffOp:
         ones = np.ones(shape)
         ones[1:-1, 1:-1] = 0
         bInd = np.nonzero(ones.flatten())[0]
-        mat = self.getMatrix.tolil()
-        mat[bInd, bInd] = 1
-        self.setMatrix(mat.tocsr())
-        return
+        mat = self.getMatrix().tolil()
+        for idx in bInd:
+            mat.rows[idx] = [idx]
+            mat.data[idx] = [1.0]
+        return mat.tocsr()
     
     def visualize(self):
         spy(self.matrix)
@@ -64,3 +65,8 @@ class FinDiffOp:
     
     def copy(self):
         return FinDiffOp(self.matrix)
+    
+    def invert_simple(self, S, BC):
+        BCMat = self.enforceBC(S.shape)
+        S[:, 0], S[:, -1], S[0], S[-1] = BC
+        return spsolve(BCMat, S.flatten()).reshape(S.shape)
