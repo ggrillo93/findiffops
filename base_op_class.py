@@ -23,6 +23,10 @@ class FinDiffOp:
     def getMatrix(self):
         return self.matrix
     
+    def setMatrix(self, mat):
+        self.matrix = mat
+        return
+    
     def __add__(self, obj):
         if isinstance(obj, FinDiffOp):
             return FinDiffOp(self.getMatrix() + obj.getMatrix())
@@ -43,6 +47,15 @@ class FinDiffOp:
     
     def __rmul__(self, obj):
         return self.__mul__(obj)
+    
+    def enforceBC(self, shape):
+        ones = np.ones(shape)
+        ones[1:-1, 1:-1] = 0
+        bInd = np.nonzero(ones.flatten())[0]
+        mat = self.getMatrix.tolil()
+        mat[bInd, bInd] = 1
+        self.setMatrix(mat.tocsr())
+        return
     
     def visualize(self):
         spy(self.matrix)

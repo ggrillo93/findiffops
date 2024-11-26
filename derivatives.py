@@ -2,7 +2,7 @@ from base_op_class import *
 from findiff import FinDiff, Coefficient
         
 class ScalarDerOp(FinDiffOp):
-    def __init__(self, N, sequence, op1 = 1, op2 = 1, c1 = 1, c2 = 1, c3 = 1, BC = 'constant'):
+    def __init__(self, N, op1 = 1, op2 = 1, c1 = 1, c2 = 1, c3 = 1):
         """ Returns matrix operator for c1 * (op1 * c2 * op2) * c3 up to second order derivatives (xDer + yDer <= 2).
             The coefficients are assumed to be 1D.
             Sequence can be ('R', 'R'), ('Z', 'Z'), ('R', 'Z'), or ('Z', 'R')
@@ -12,80 +12,51 @@ class ScalarDerOp(FinDiffOp):
                   - Implement higher order accuracy
         """
 
-        assert (BC == 'constant' or BC == 'backward')
-        assert sequence == ('R', 'R') or sequence == ('R', 'Z') or sequence == ('Z', 'Z') or sequence == ('Z', 'R')
-
-        if BC == 'backward':
-            mat = self._FinDiffInit(N, op1, op2, c1, c2, c3)
-        else:
-            mat = self._manualInit(N, op1, op2, c1, c2, c3, sequence)
+        mat = self._FinDiffInit(N, op1, op2, c1, c2, c3)
             
         super().__init__(mat)
-        self.N, self.BC, self.sequence = N, BC, sequence
+        self.N = N
 
     def _FinDiffInit(self, N, op1, op2, c1, c2, c3):
-        # 11.25.24 need to test this
         C1 = Coefficient(c1)
         C2 = Coefficient(c2)
         if isinstance(c3, (int, float, np.integer, np.floating)):
-            C3 = np.eye(N) * c3
-        elif c3.ndim == 1:
-            C3 = diags(np.tile(c3, N), 0)
-        mat = (C1 * op1 * (C2 * op2)).matrix([N, N]) @ C3
-        return mat
-    
-    def _manualInit(self, N, op1, op2, c1, c2, c3, sequence):
-        I = np.eye(N)
-        C1 = Coefficient(c1)
-        C2 = Coefficient(c2)
-        C3 = I * c3 if isinstance(c3, (int, float, np.integer, np.floating)) else np.diag(c3)
-        if sequence == ('R', 'R') or sequence == ('Z', 'Z'):
-            mat1D = (C1 * op1 * (C2 * op2)).matrix((N, )) @ C3
-            mat1D[0] = mat1D[-1] = 0
-            if sequence[0] == 'Z':
-                return kron(mat1D, I)
-            else:
-                return kron(I, mat1D)
+            mat = (C1 * op1 * (C2 * op2)).matrix([N, N]) * c3
         else:
-            if sequence == ('R', 'Z'):
-                mat1DR = (C1 * op1).matrix((N,)).toarray()
-                mat1DZ = (C2 * op2).matrix((N,)).toarray() @ C3
-            else:
-                mat1DR = (C2 * op2).matrix((N,)).toarray() @ C3
-                mat1DZ = (C1 * op1).matrix((N,)).toarray()
-            mat1DR[0] = mat1DZ[0] = mat1DR[-1] = mat1DZ[-1] = 0
-            return kron(mat1DZ, mat1DR)
+            mat = (C1 * op1 * (C2 * op2)).matrix([N, N]) @ diags(c3.flatten(), 0)
+        return mat
         
 class BasicDerOp(ScalarDerOp):
-    def __init__(self, N, RDer, ZDer, dR = None, dZ = None, BC = 'constant'):
+    def __init__(self, N, RDer, ZDer, dR = None, dZ = None):
         assert (RDer + ZDer <= 2)
         assert not (RDer > 0 and dR is None)
         assert not (ZDer > 0 and dZ is None)
 
         if dZ is None:
-            dROp = FinDiff(0, dR, RDer)
-            super().__init__(N, ('R', 'R'), op1 = dROp, BC = BC)
+            dROp = FinDiff(1, dR, RDer)
+            super().__init__(N, op1 = dROp)
         elif dR is None:
             dZOp = FinDiff(0, dZ, ZDer)
-            super().__init__(N, ('Z', 'Z'), op1 = dZOp, BC = BC)
+            super().__init__(N, op1 = dZOp)
         else:
-            dROp = FinDiff(0, dR)
+            dROp = FinDiff(1, dR)
             dZOp = FinDiff(0, dZ)
-            super().__init__(N, ('R', 'Z'), op1 = dROp, op2 = dZOp, BC = BC)
+            super().__init__(N, op1 = dROp, op2 = dZOp)
     
 class ScalarLapOp(FinDiffOp):
-    def __init__(self, N, dR, dZ, R, BC = 'constant'):
-        dROp = FinDiff(0, dR)
-        dRMat = ScalarDerOp(N, ('R', 'R'), op1 = dROp, op2 = dROp, c1 = 1 / R, c2 = R, BC = BC)
-        dZMat = BasicDerOp(N, 0, 2, dZ = dZ, BC = BC)
-        super().__init__(dRMat + dZMat)
+    def __init__(self, N, dR, dZ, R):
+        dROp = FinDiff(1, dR)
+        dRMat = ScalarDerOp(N, op1 = dROp, op2 = dROp, c1 = 1 / R, c2 = R).getMatrix()
+        dZMat = BasicDerOp(N, 0, 2, dZ = dZ).getMatrix()
+        mat = dRMat + dZMat
+        super().__init__(mat)
 
 class VectorLaplacianOp(FinDiffOp):
-    def __init__(self, N, dR, dZ, R, BC = 'constant'):
-        scLap = ScalarLapOp(N, dR, dZ, R, BC = BC)
+    def __init__(self, N, dR, dZ, R):
+        scLap = ScalarLapOp(N, dR, dZ, R).getMatrix()
         modEye = np.eye(3)
         modEye[2, 2] = 0
-        mat = kron(scLap, eye(3)) - kron(kron(np.diag(1 / R ** 2), eye(N)), eye(N))
+        mat = kron(scLap, eye(3)) - kron(diags(1 / (R.flatten() ** 2), 0), modEye)
         super().__init__(mat)
 
 class GradOp(FinDiffOp):
@@ -95,18 +66,39 @@ class DivOp(FinDiffOp):
     pass
 
 class GradDivOp(FinDiffOp):
-    pass
+    def __init__(self, N, dR, dZ, R):
+        mat = self._init_with_kron(N, dR, dZ, R)
+        super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+    
+    def _init_with_kron(self, N, dR, dZ, R):
+        dROp = FinDiff(1, dR)
+        dZOp = FinDiff(0, dZ)
+        MRROp = ScalarDerOp(N, op1 = dROp, op2 = dROp, c2 = 1 / R, c3 = R).getMatrix()
+        MRZOp = ScalarDerOp(N, op1 = dROp, op2 = dZOp, c1 = 1 / R, c2 = R).getMatrix()
+        MZROp = BasicDerOp(N, 1, 1, dR = dR, dZ = dZ).getMatrix()
+        MZZOp = BasicDerOp(N, 0, 2, dZ = dZ).getMatrix()
+        MRRMat, MRZMat, MZRMat, MZZMat = np.zeros([4, 3, 3])
+        MRRMat[0, 0] = MRZMat[2, 0] = MZRMat[0, 2] = MZZMat[2, 2] = 1
+        mat = kron(MRROp, MRRMat) + kron(MRZOp, MRZMat) + kron(MZROp, MZRMat) + kron(MZZOp, MZZMat)
+        return mat
+
+class CurlCurlOp(FinDiffOp):
+    def __init__(self, N, dR, dZ, R):
+        GradDiv = GradDivOp(N, dR, dZ, R)
+        Lap = VectorLaplacianOp(N, dR, dZ, R)
+        super().__init__(GradDiv.getMatrix() - Lap.getMatrix())
 
 class CurlOp(FinDiffOp):
     """ Returns the curl operator in axisymmetric cylindrical coordinates """
-    def __init__(self, N, dR, dZ, R, BC = 'constant'):
-        dROp = FinDiff(0, dR)
-        dRMat0 = BasicDerOp(N, 1, 0, dR = dR, BC = BC).getMatrix()
-        dRMat1 = ScalarDerOp(N, ('R', 'R'), op2 = dROp, c2 = 1 / R, c3 = R, BC = BC).getMatrix()
-        dZMat = BasicDerOp(N, 0, 1, dZ = dZ, BC = BC).getMatrix()
+    def __init__(self, N, dR, dZ, R):
+        dROp = FinDiff(1, dR)
+        dRMat0 = BasicDerOp(N, 1, 0, dR = dR).getMatrix()
+        dRMat1 = ScalarDerOp(N, op2 = dROp, c2 = 1 / R, c3 = R).getMatrix()
+        dZMat = BasicDerOp(N, 0, 1, dZ = dZ).getMatrix()
         mat = self._init_with_kron(dRMat0, dRMat1, dZMat)
         super().__init__(mat)
-        self.N, self.dR, self.dZ, self.R, self.BC = N, dR, dZ, R, BC
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
     
     def _init_with_kron(self, dRMat0, dRMat1, dZMat):
         MZ = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 0]])
