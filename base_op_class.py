@@ -2,6 +2,7 @@ import numpy as np
 from scipy.sparse import *
 from scipy.sparse.linalg import *
 from matplotlib.pyplot import spy, show
+from minresQLP import MinresQLP
 
 class FinDiffOp:
     def __init__(self, matrix):
