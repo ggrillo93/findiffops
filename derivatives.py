@@ -50,6 +50,7 @@ class ScalarLapOp(FinDiffOp):
         dZMat = BasicDerOp(N, 0, 2, dZ = dZ).getMatrix()
         mat = dRMat + dZMat
         super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
 class VectorLaplacianOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
@@ -58,12 +59,86 @@ class VectorLaplacianOp(FinDiffOp):
         modEye[2, 2] = 0
         mat = kron(scLap, eye(3)) - kron(diags(1 / (R.flatten() ** 2), 0), modEye)
         super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+
+class DirDerivOp(FinDiffOp):
+    def __init__(self, N, dR, dZ, R, A):
+        assert A.shape == (N, N, 3)
+        AR, Aphi, AZ = [A[..., i] for i in range(3)]
+        ddR = FinDiff(1, dR)
+        ddZ = FinDiff(0, dZ)
+        ARCoeff, AZCoeff = Coefficient(AR), Coefficient(AZ)
+        mat = kron((ARCoeff * ddR + AZCoeff * ddZ).matrix([N, N]), eye(3))
+        multMat = np.zeros([3, 3])
+        multMat[0, 1] = -1
+        multMat[1, 0] = 1
+        mat += kron(diags(Aphi / R).flatten(), multMat)
+        super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+
+class GradDivOpWCoeff(FinDiffOp):
+    """ Returns operator corresponding to grad(a div(MA)), with a a scalar, M a matrix, and A a vector. The operator acts on A """
+    def __init__(self, N, dR, dZ, R, scGrid, matGrid):
+        mat = self._init_with_kron(N, dR, dZ, R, scGrid, matGrid)
+        super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+    
+    def _init_with_kron(N, dR, dZ, R, scGrid, matGrid):
+        ARR, AphiR, AZR = [matGrid[:, :, 0, i] for i in range(3)]
+        ARZ, AphiZ, AZZ = [matGrid[:, :, 2, i] for i in range(3)]
+        kronMats = np.zeros([6, 3, 3])
+        kronMats[0, 0, 0], kronMats[1, 0, 1], kronMats[2, 0, 2] = np.ones(3)
+        kronMats[3, 2, 0], kronMats[4, 2, 1], kronMats[5, 2, 2] = np.ones(3)
+        ddR = FinDiff(1, dR)
+        ddZ = FinDiff(0, dZ)
+        scGridOverR = scGrid / R
+        MRR = ScalarDerOp(N, op1 = ddR, op2 = ddR, c2 = scGridOverR, c3 = R * ARR).getMatrix()
+        MRR += ScalarDerOp(N, op1 = ddR, op2 = ddZ, c2 = scGrid, c3 = ARZ).getMatrix()
+        MphiR = ScalarDerOp(N, op1 = ddR, op2 = ddR, c2 = scGridOverR, c3 = R * AphiR).getMatrix()
+        MphiR += ScalarDerOp(N, op1 = ddR, op2 = ddZ, c2 = scGrid, c3 = AphiZ).getMatrix()
+        MZR = ScalarDerOp(N, op1 = ddR, op2 = ddR, c2 = scGridOverR, c3 = R * AZR).getMatrix()
+        MZR += ScalarDerOp(N, op1 = ddR, op2 = ddZ, c2 = scGrid, c3 = AZZ).getMatrix()
+        MRZ = ScalarDerOp(N, op1 = ddZ, op2 = ddR, c2 = scGridOverR, c3 = R * ARR).getMatrix()
+        MRZ += ScalarDerOp(N, op1 = ddZ, op2 = ddZ, c2 = scGrid, c3 = ARZ).getMatrix()
+        MphiZ = ScalarDerOp(N, op1 = ddZ, op2 = ddR, c2 = scGridOverR, c3 = R * AphiR).getMatrix()
+        MphiZ += ScalarDerOp(N, op1 = ddZ, op2 = ddZ, c2 = scGrid, c3 = AphiZ).getMatrix()
+        MZZ = ScalarDerOp(N, op1 = ddZ, op2 = ddR, c2 = scGridOverR, c3 = R * AZR).getMatrix()
+        MZZ += ScalarDerOp(N, op1 = ddZ, op2 = ddZ, c2 = scGrid, c3 = AZZ).getMatrix()
+        mats = [MRR, MphiR, MZR, MRZ, MphiZ, MZZ]
+        mat = 0
+        for i in range(len(mats)):
+            mat += kron(mats[i], kronMats[i])
+        return mat
 
 class GradOp(FinDiffOp):
-    pass
+    def __init__(self, N, dR, dZ):
+        RMat = FinDiff(1, dR).getMatrix([N, N])
+        ZMat = FinDiff(0, dZ).getMatrix([N, N])
+        mat = kron(RMat, np.array([[1, 0, 0]])).T + kron(ZMat, np.array([[0, 0, 1]])).T
+        super().__init__(mat)
+        self.N, self.dR, self.dZ = N, dR, dZ
+
+    def apply(self, grid, bVals = None):
+        assert grid.shape == (self.N, self.N)
+        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N, 3)
+        if bVals is None:
+            return soln
+        else:
+            lrVals, tbVals = bVals
+            if lrVals is not None:
+                soln[:, 0], soln[:, -1] = lrVals
+            if tbVals is not None:
+                soln[0], soln[-1] = tbVals
+            return soln
 
 class DivOp(FinDiffOp):
-    pass
+    def __init__(self, N, dR, dZ, R):
+        dROp = FinDiff(1, dR)
+        RMat = ScalarDerOp(N, op2 = dROp, c2 = 1 / R, c3 = R).getMatrix()
+        ZMat = FinDiff(0, dZ).getMatrix([N, N])
+        mat = kron(RMat, np.array([1, 0, 0])) + kron(ZMat, np.array([0, 0, 1]))
+        super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
 class GradDivOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
@@ -82,12 +157,26 @@ class GradDivOp(FinDiffOp):
         MRRMat[0, 0] = MRZMat[2, 0] = MZRMat[0, 2] = MZZMat[2, 2] = 1
         mat = kron(MRROp, MRRMat) + kron(MRZOp, MRZMat) + kron(MZROp, MZRMat) + kron(MZZOp, MZZMat)
         return mat
+    
+    def apply(self, grid, bVals = None):
+        assert grid.shape == (self.N, self.N, 3)
+        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N)
+        if bVals is None:
+            return soln
+        else:
+            lrVals, tbVals = bVals
+            if lrVals is not None:
+                soln[:, 0], soln[:, -1] = lrVals
+            if tbVals is not None:
+                soln[0], soln[-1] = tbVals
+            return soln
 
 class CurlCurlOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
         GradDiv = GradDivOp(N, dR, dZ, R)
         Lap = VectorLaplacianOp(N, dR, dZ, R)
         super().__init__(GradDiv.getMatrix() - Lap.getMatrix())
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
 class CurlOp(FinDiffOp):
     """ Returns the curl operator in axisymmetric cylindrical coordinates """

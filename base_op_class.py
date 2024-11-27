@@ -71,3 +71,12 @@ class FinDiffOp:
         BCMat = self.enforceBC(S.shape)
         S[:, 0], S[:, -1], S[0], S[-1] = BC
         return spsolve(BCMat, S.flatten()).reshape(S.shape)
+    
+    def invert_minresQLP(self, S, BC, rtol = 1e-7, maxit = 1e3, debug = False):
+        BCMat = self.enforceBC(S.shape)
+        S[:, 0], S[:, -1], S[0], S[-1] = BC
+        soln = MinresQLP(BCMat, S.flatten(), rtol, maxit)
+        if debug:
+            return soln
+        else:
+            return soln[0].reshape(S.shape)
