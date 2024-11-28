@@ -87,6 +87,9 @@ def crossMatGrid(vecField):
 
     return vecCross
 
+def assembleVec(AR, Aphi, AZ):
+    return np.stack((AR, Aphi, AZ), axis = -1)
+
 def testVecProducts(A, B):
     dot = DotOp(A)
     cross = CrossOp(A)
@@ -106,14 +109,15 @@ def testFirstOrderOps(A, B, dR, dZ, RGrid):
     assert_array_almost_equal(divFD(A, dR, dZ, RGrid), div.apply(A), err_msg = "Divergences not equal")
     assert_array_almost_equal(gradFD(A[..., 1], dR, dZ), scGrad.apply(A[..., 1]), err_msg = "Scalar gradients not equal")
     assert_array_almost_equal(gradVecFD(A, dR, dZ, RGrid), vecGrad.apply(A), err_msg = "Vector gradients not equal")
-    assert_array_almost_equal(vecDotGradVecFD(A, B, dR, dZ, RGrid), dirDer.apply(B), err_msg = "Directional derivatives not equal")
+    assert_array_almost_equal(vecDotGradVecFD(A, B, dR, dZ, RGrid), dirDer.apply(B), err_msg = "Directional derivatives #1 not equal")
+    assert_array_almost_equal(vecDotGradVecFD(B, A, dR, dZ, RGrid), MatOp(vecGrad.apply(A)).apply(B), err_msg = "Directional derivatives #2 not equal")
     print("First order differential vector operator tests passed")
     return
 
 def testSecondOrderOps(A, B, dR, dZ, RGrid):
     N = A.shape[0]
     scLap = ScalarLapOp(N, dR, dZ, RGrid)
-    vecLap = VectorLapOp(N, dR, dZ, RGrid)
+    vecLap = VecLapOp(N, dR, dZ, RGrid)
     gradDiv = GradDivOp(N, dR, dZ, RGrid)
     BMat = crossMatGrid(B)
     gradDivCoeff = GradDivOpWCoeff(N, dR, dZ, RGrid, A[..., 1], BMat)
@@ -124,6 +128,18 @@ def testSecondOrderOps(A, B, dR, dZ, RGrid):
     print("Second order differential vector operator tests passed")
     return
 
+def testSimpleSolver(F, S, dR, dZ, RGrid):
+    N = S.shape[0]
+    vecLap = VecLapOp(N, dR, dZ, RGrid)
+    BC = (F[:, 0], F[:, -1], F[0], F[-1])
+    FNumDirect = vecLap.invert_simple(S, BC)
+    maxErr = np.max(F.flatten() - FNumDirect.flatten())
+    print("Max error in Laplacian inversion = " + str(maxErr))
+    assert maxErr <= 1e-5, "Laplacian inversion error too high"
+    FNumAdj = vecLap.invert_simple(S, BC, BCEnf = 'adjust')
+    assert_array_almost_equal(FNumDirect, FNumAdj, err_msg = "Vector Laplace inversion methods are not equivalent")
+    print("Vector Laplacian inversion test passed")
+    return
 
 if __name__ == '__main__':
     Rmin = 1
@@ -137,7 +153,13 @@ if __name__ == '__main__':
     dR = R[1] - R[0]
     dZ = Z[1] - Z[0]
     A0 = np.stack((RGrid + ZGrid ** 2, np.cos(RGrid * ZGrid), ZGrid + 3 * RGrid ** 2), axis = -1)
-    A1 = np.stack((np.sin(RGrid * ZGrid), 5 * RGrid ** 2 * ZGrid, RGrid ** 2 - ZGrid ** 2), axis = -1)
+    A1 = np.stack((np.sin(RGrid * ZGrid), 5 * RGrid ** 2 * ZGrid, RGrid ** 3 - ZGrid ** 2), axis = -1)
+    SR = -(RGrid ** 2 + ZGrid ** 2) * np.sin(RGrid * ZGrid) + ZGrid * np.cos(RGrid * ZGrid) / RGrid - np.sin(RGrid * ZGrid) / RGrid ** 2
+    Sphi = 15 * ZGrid
+    SZ = 9 * RGrid - 2
+    S = assembleVec(SR, Sphi, SZ)
     testVecProducts(A0, A1)
     testFirstOrderOps(A1, A0, dR, dZ, RGrid)
     testSecondOrderOps(A1, A0, dR, dZ, RGrid)
+    testSimpleSolver(A1, S, dR, dZ, RGrid)
+    print("All tests passed!")

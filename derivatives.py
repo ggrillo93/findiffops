@@ -52,7 +52,7 @@ class ScalarLapOp(FinDiffOp):
         super().__init__(mat)
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
-class VectorLapOp(FinDiffOp):
+class VecLapOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
         scLap = ScalarLapOp(N, dR, dZ, R).getMatrix()
         modEye = np.eye(3)
@@ -197,7 +197,7 @@ class GradDivOp(FinDiffOp):
 class CurlCurlOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
         GradDiv = GradDivOp(N, dR, dZ, R)
-        Lap = VectorLaplacianOp(N, dR, dZ, R)
+        Lap = VecLapOp(N, dR, dZ, R)
         super().__init__(GradDiv.getMatrix() - Lap.getMatrix())
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
