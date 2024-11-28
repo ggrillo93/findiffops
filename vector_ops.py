@@ -33,5 +33,31 @@ class CrossOp(FinDiffOp):
         RMat, phiMat, ZMat = np.zeros([3, 3, 3])
         RMat[2, 1] = phiMat[0, 2] = ZMat[1, 0] = 1
         RMat[1, 2] = phiMat[2, 0] = ZMat[0, 1] = -1
-        mat = kron(AR, RMat) + kron(Aphi, phiMat) + kron(AZ, ZMat)
+        mat = kron(diags(AR.flatten(), 0), RMat) + kron(diags(Aphi.flatten(), 0), phiMat) + kron(diags(AZ.flatten(), 0), ZMat)
         return mat, N
+    
+    def apply(self, grid):
+        assert grid.shape == (self.N, self.N, 3)
+        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N, 3)
+        return soln
+    
+class MatOp(FinDiffOp):
+    def __init__(self, matGrid):
+        assert matGrid.ndim == 4
+        mat = self._init_with_kron(matGrid)
+        super().__init__(mat)
+        self.N = matGrid.shape[0]
+
+    def _init_with_kron(self, matGrid):
+        MRR, MRphi, MRZ = [matGrid[:, :, 0, i] for i in range(3)]
+        MphiR, Mphiphi, MphiZ = [matGrid[:, :, 1, i] for i in range(3)]
+        MZR, MZphi, MZZ = [matGrid[:, :, 2, i] for i in range(3)]
+        unitMats = np.zeros([9, 3, 3])
+        unitMats[0, 0, 0] = unitMats[1, 0, 1] = unitMats[2, 0, 2] = 1
+        unitMats[3, 1, 0] = unitMats[4, 1, 1] = unitMats[5, 1, 2] = 1
+        unitMats[6, 2, 0] = unitMats[7, 2, 1] = unitMats[8, 2, 2] = 1
+        MFlat = [MRR, MRphi, MRZ, MphiR, Mphiphi, MphiZ, MZR, MZphi, MZZ]
+        mat = 0
+        for i in range(9):
+            mat += kron(diags(MFlat[i].flatten(), 0), unitMats[i])
+        return mat

@@ -52,7 +52,7 @@ class ScalarLapOp(FinDiffOp):
         super().__init__(mat)
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
-class VectorLaplacianOp(FinDiffOp):
+class VectorLapOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
         scLap = ScalarLapOp(N, dR, dZ, R).getMatrix()
         modEye = np.eye(3)
@@ -72,7 +72,7 @@ class DirDerivOp(FinDiffOp):
         multMat = np.zeros([3, 3])
         multMat[0, 1] = -1
         multMat[1, 0] = 1
-        mat += kron(diags(Aphi / R).flatten(), multMat)
+        mat += kron(diags((Aphi / R).flatten(), 0), multMat)
         super().__init__(mat)
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
 
@@ -83,7 +83,8 @@ class GradDivOpWCoeff(FinDiffOp):
         super().__init__(mat)
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
     
-    def _init_with_kron(N, dR, dZ, R, scGrid, matGrid):
+    def _init_with_kron(self, N, dR, dZ, R, scGrid, matGrid):
+        # Matrix indices are not right
         ARR, AphiR, AZR = [matGrid[:, :, 0, i] for i in range(3)]
         ARZ, AphiZ, AZZ = [matGrid[:, :, 2, i] for i in range(3)]
         kronMats = np.zeros([6, 3, 3])
@@ -110,11 +111,11 @@ class GradDivOpWCoeff(FinDiffOp):
             mat += kron(mats[i], kronMats[i])
         return mat
 
-class GradOp(FinDiffOp):
+class ScGradOp(FinDiffOp):
     def __init__(self, N, dR, dZ):
-        RMat = FinDiff(1, dR).getMatrix([N, N])
-        ZMat = FinDiff(0, dZ).getMatrix([N, N])
-        mat = kron(RMat, np.array([[1, 0, 0]])).T + kron(ZMat, np.array([[0, 0, 1]])).T
+        RMat = FinDiff(1, dR).matrix([N, N])
+        ZMat = FinDiff(0, dZ).matrix([N, N])
+        mat = kron(RMat, np.array([[1, 0, 0]]).T) + kron(ZMat, np.array([[0, 0, 1]]).T)
         super().__init__(mat)
         self.N, self.dR, self.dZ = N, dR, dZ
 
@@ -130,15 +131,50 @@ class GradOp(FinDiffOp):
             if tbVals is not None:
                 soln[0], soln[-1] = tbVals
             return soln
+        
+class VecGradOp(FinDiffOp):
+    def __init__(self, N, dR, dZ, R):
+        RMat = kron(FinDiff(1, dR).matrix([N, N]), np.eye(3))
+        ZMat = kron(FinDiff(0, dZ).matrix([N, N]), np.eye(3))
+        midMat = kron(diags(1 / R.flatten(), 0), np.array([[0, -1, 0], [1, 0, 0], [0, 0, 0]]))
+        mat = kron(RMat, np.array([[1, 0, 0]]).T) + kron(midMat, np.array([[0, 1, 0]]).T) + kron(ZMat, np.array([[0, 0, 1]]).T)
+        super().__init__(mat)
+        self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+    
+    def apply(self, grid, bVals = None):
+        assert grid.shape == (self.N, self.N, 3)
+        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N, 3, 3)
+        if bVals is None:
+            return soln
+        else:
+            lrVals, tbVals = bVals
+            if lrVals is not None:
+                soln[:, 0], soln[:, -1] = lrVals
+            if tbVals is not None:
+                soln[0], soln[-1] = tbVals
+            return soln
 
 class DivOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
         dROp = FinDiff(1, dR)
         RMat = ScalarDerOp(N, op2 = dROp, c2 = 1 / R, c3 = R).getMatrix()
-        ZMat = FinDiff(0, dZ).getMatrix([N, N])
+        ZMat = FinDiff(0, dZ).matrix([N, N])
         mat = kron(RMat, np.array([1, 0, 0])) + kron(ZMat, np.array([0, 0, 1]))
         super().__init__(mat)
         self.N, self.dR, self.dZ, self.R = N, dR, dZ, R
+
+    def apply(self, grid, bVals = None):
+        assert grid.shape == (self.N, self.N, 3)
+        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N)
+        if bVals is None:
+            return soln
+        else:
+            lrVals, tbVals = bVals
+            if lrVals is not None:
+                soln[:, 0], soln[:, -1] = lrVals
+            if tbVals is not None:
+                soln[0], soln[-1] = tbVals
+            return soln
 
 class GradDivOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
@@ -157,19 +193,6 @@ class GradDivOp(FinDiffOp):
         MRRMat[0, 0] = MRZMat[2, 0] = MZRMat[0, 2] = MZZMat[2, 2] = 1
         mat = kron(MRROp, MRRMat) + kron(MRZOp, MRZMat) + kron(MZROp, MZRMat) + kron(MZZOp, MZZMat)
         return mat
-    
-    def apply(self, grid, bVals = None):
-        assert grid.shape == (self.N, self.N, 3)
-        soln = (self.matrix @ grid.flatten()).reshape(self.N, self.N)
-        if bVals is None:
-            return soln
-        else:
-            lrVals, tbVals = bVals
-            if lrVals is not None:
-                soln[:, 0], soln[:, -1] = lrVals
-            if tbVals is not None:
-                soln[0], soln[-1] = tbVals
-            return soln
 
 class CurlCurlOp(FinDiffOp):
     def __init__(self, N, dR, dZ, R):
